@@ -3059,6 +3059,53 @@ TEST(MountTest, OverlayfsSgidBitIsCopiedUp) {
   }
 }
 
+TEST(MountTest, OverlayfsSecurityCapabilityRequiresSetFcap) {
+  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SYS_ADMIN)));
+  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SETFCAP)));
+
+  auto base_dir = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
+  auto tmpfs_mount = ASSERT_NO_ERRNO_AND_VALUE(
+      Mount("tmpfs", base_dir.path(), "tmpfs", 0, "", MNT_DETACH));
+
+  auto lower =
+      ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDirIn(base_dir.path()));
+  auto upper =
+      ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDirIn(base_dir.path()));
+  auto work = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDirIn(base_dir.path()));
+  auto merged =
+      ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDirIn(base_dir.path()));
+
+  // Mount the overlayfs.
+  std::string opts = "lowerdir=" + lower.path() + ",upperdir=" + upper.path() +
+                     ",workdir=" + work.path();
+  auto overlay_mount =
+      ASSERT_NO_ERRNO_AND_VALUE(Mount("overlay", merged.path().c_str(),
+                                      "overlay", 0, opts.c_str(), MNT_DETACH));
+
+  struct {
+    uint32_t magic_etc;
+    uint32_t permitted_lo;
+    uint32_t inheritable_lo;
+    uint32_t permitted_hi;
+    uint32_t inheritable_hi;
+  } cap_data = {};
+  cap_data.magic_etc = VFS_CAP_REVISION_2 | VFS_CAP_FLAGS_EFFECTIVE;
+  cap_data.permitted_lo = 1 << CAP_SETUID;
+
+  auto file = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateFileIn(merged.path()));
+
+  // Setting security.capability with CAP_SETFCAP should succeed
+  ASSERT_THAT(setxattr(file.path().c_str(), "security.capability", &cap_data,
+                       sizeof(cap_data), 0),
+              SyscallSucceeds());
+
+  // Setting security.capability without CAP_SETFCAP should fail
+  AutoCapability set_fcap(CAP_SETFCAP, false);
+  ASSERT_THAT(setxattr(file.path().c_str(), "security.capability", &cap_data,
+                       sizeof(cap_data), 0),
+              SyscallFailsWithErrno(EPERM));
+}
+
 // Renaming a directory on an overlay inside a user namespace requires
 // user.overlay.* xattrs to mark the directory opaque.
 TEST(MountTest, OverlayfsDirectoryRenameInUserNamespace) {
