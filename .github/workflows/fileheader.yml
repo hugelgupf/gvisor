@@ -1,0 +1,31 @@
+name: "License header"
+
+"on":
+  pull_request:
+    branches:
+      - master
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fileheader:
+    name: fileheader
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+
+    - name: Fetch base branch
+      run: |
+        git fetch --no-tags origin \
+          "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+
+    - name: Check license headers
+      run: |
+        tools/check_license_headers.sh "origin/${{ github.base_ref }}"
